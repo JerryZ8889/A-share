@@ -52,19 +52,33 @@ def run_full_scan():
     results = []
     bar = st.progress(0)
     status = st.empty()
+    error_count = 0 # 记录失败次数
     
     for i, code in enumerate(all_stocks):
-        status.text(f"正在深度扫描 500 指数成份股: {i+1}/500")
+        status.text(f"正在深度扫描 500 指数成份股: {i+1}/500 (失败: {error_count})")
         bar.progress((i + 1) / 500)
         try:
-            df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date="20251101", adjust="qfq")
-            if len(df) >= 60:
-                c, m, h = df['收盘'].iloc[-1], df['收盘'].rolling(20).mean().iloc[-1], df['最高'].rolling(60).max().iloc[-1]
+            # 线上环境建议减小 start_date 范围以提高成功率
+            df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date="20251001", adjust="qfq")
+            if df is not None and len(df) >= 20: # 降低门槛进行测试
+                c = df['收盘'].iloc[-1]
+                m = df['收盘'].rolling(20).mean().iloc[-1]
+                h = df['最高'].rolling(60).max().iloc[-1] if len(df) >= 60 else df['最高'].max()
                 results.append({'m': 1 if c > m else 0, 'h': 1 if c >= h else 0})
-        except: continue
+            else:
+                error_count += 1
+        except:
+            error_count += 1
+            continue
     
     bar.empty()
-    status.success("✅ 500只全量体检完成！")
+    
+    # --- 核心修复逻辑 ---
+    if not results:
+        status.error(f"❌ 扫描完成，但未获取到有效数据。失败次数: {error_count}。可能是云端 IP 被数据源封锁。")
+        return 0.0, 0.0  # 返回默认值防止崩盘
+    
+    status.success(f"✅ 扫描完成！成功: {len(results)}, 失败: {error_count}")
     res = pd.DataFrame(results)
     return res['m'].mean() * 100, res['h'].mean() * 100
 
