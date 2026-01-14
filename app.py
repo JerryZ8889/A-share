@@ -48,16 +48,16 @@ except Exception as e:
     st.stop()
 
 # 插入： 状态显示逻辑 (建议挪到画图之前)
-  try:
-        last_row = history_df.iloc[-1]
-        scan_date = history_df.index[-1].strftime('%Y-%m-%d')
-        # 尝试读取时间，如果没有这个列就显示“已更新”
-        update_time = last_row['update_time'] if 'update_time' in last_row else ""
-        
-        # 在页面顶部展示一个漂亮的成功提示
-        st.success(f"✅ 深度扫描数据同步成功！ 数据日期：{scan_date} | 更新时间：{update_time}")
-    except:
-        st.warning("⚠️ 正在等待今日数据同步...")
+try:
+    last_row = history_df.iloc[-1]
+    scan_date = history_df.index[-1].strftime('%Y-%m-%d')
+    # 尝试读取时间，如果没有这个列就显示“已更新”
+    update_time = last_row['update_time'] if 'update_time' in last_row else ""
+    
+    # 在页面顶部展示一个漂亮的成功提示
+    st.success(f"✅ 深度扫描数据同步成功！ 数据日期：{scan_date} | 更新时间：{update_time}")
+except:
+    st.warning("⚠️ 正在等待今日数据同步...")
 # 3. 布局：左右双图
 st.info(f"📅 本次体检数据日期：{scan_date} (由本地算力强力驱动)")
 col1, col2 = st.columns(2)
