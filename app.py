@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="量化大师-专业版", layout="wide")
 st.title("🛡️ 量化大师：全量扫描结果看板 (C方案)")
 
-# 1. 基础数据加载 (指数走势实时抓取)
-@st.cache_data(ttl=0)
+# --- 1. 基础数据加载 (指数走势：每小时更新一次) ---
+@st.cache_data(ttl=3600)
 def load_index_data():
     df_idx = ak.stock_zh_index_daily(symbol="sh000905")
     df_idx['date'] = pd.to_datetime(df_idx['date'])
@@ -17,20 +17,29 @@ def load_index_data():
 
 df_idx = load_index_data()
 
-# 2. 读取累积的扫描结果
-try:
-    history_df = pd.read_csv("scan_results.csv")
+# --- 2. 读取累积的扫描结果 (核心加固区：强制实时同步) ---
+@st.cache_data(ttl=0)  # 🚩 关键：设置缓存为 0，确保每次刷新都读最新的 GitHub 文件
+def load_scan_results():
+    # 读取你手动补全或自动生成的 CSV
+    df = pd.read_csv("scan_results.csv")
     
-    # 核心数据清洗：强制转日期并扔掉空行
-    history_df['date'] = pd.to_datetime(history_df['date'], errors='coerce')
-    history_df = history_df.dropna(subset=['date']).sort_values('date')
-    history_df.set_index('date', inplace=True)
+    # 你的核心清洗逻辑：强制转日期并扔掉空行
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    df = df.dropna(subset=['date']).sort_values('date')
+    df.set_index('date', inplace=True)
+    return df
+
+try:
+    # 调用加固后的函数
+    history_df = load_scan_results()
     
     # 获取最新数据用于展示
     last_row = history_df.iloc[-1]
     curr_ma20 = last_row['ma20_ratio']
     curr_nh = last_row['new_high_ratio']
     scan_date = history_df.index[-1].strftime('%Y-%m-%d')
+    
+    # 尝试读取时间，如果没有这个列就显示为空
     update_time = f" | 更新时间：{last_row['update_time']}" if 'update_time' in last_row else ""
     
     # --- 顶部的成功提示框 (确保对齐) ---
@@ -40,7 +49,7 @@ except Exception as e:
     st.error(f"⚠️ 数据同步中或格式有误。 详情: {e}")
     st.stop()
 
-# 3. 布局：左右双图
+# --- 3. 布局：左右双图 ---
 col1, col2 = st.columns(2)
 
 with col1:
@@ -70,7 +79,7 @@ with col2:
     fig2.tight_layout()
     st.pyplot(fig2)
 
-# 4. 底部诊断结论
+# --- 4. 底部诊断结论 ---
 st.divider()
 score = 50
 if curr_ma20 > 50: score += 20
