@@ -8,7 +8,7 @@ st.set_page_config(page_title="量化大师-专业版", layout="wide")
 st.title("🛡️ 量化大师：全量扫描结果看板 (C方案)")
 
 # 1. 基础数据加载 (指数走势实时抓取)
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=0)
 def load_index_data():
     df_idx = ak.stock_zh_index_daily(symbol="sh000905")
     df_idx['date'] = pd.to_datetime(df_idx['date'])
