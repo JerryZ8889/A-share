@@ -29,11 +29,12 @@ def load_index_data():
 
 @st.cache_data(ttl=0)
 def load_scan_results():
-    """加载 A代码 市场广度结果"""
-    if not os.path.exists("scan_results.csv"):
-        st.error("❌ 未找到 scan_results.csv，请先运行扫描程序。")
+    """加载 A代码 市场广度结果 (根目录直读)"""
+    file_name = "scan_results.csv"
+    if not os.path.exists(file_name):
+        st.error(f"❌ 未找到 {file_name}，请确保该文件已上传到 GitHub 根目录。")
         st.stop()
-    df = pd.read_csv("scan_results.csv")
+    df = pd.read_csv(file_name)
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
     df = df.dropna(subset=['date']).sort_values('date')
     df.set_index('date', inplace=True)
@@ -41,12 +42,14 @@ def load_scan_results():
 
 @st.cache_data(ttl=3600)
 def load_master_data():
-    """加载 B代码 首阴战法所需 Master 数据"""
-    file_path = os.path.join('csi500_data', 'CSI500_Master_Strategy.csv')
-    if not os.path.exists(file_path):
-        st.error(f"❌ 找不到文件 {file_path}")
+    """加载 B代码 首阴战法数据 (根目录直读)"""
+    # 【核心修改】：删除了 'csi500_data' 文件夹路径，直接读取文件名
+    file_name = 'CSI500_Master_Strategy.csv'
+    
+    if not os.path.exists(file_name):
+        st.error(f"❌ 找不到文件 {file_name}。请确认文件已直接上传至 GitHub 仓库根目录。")
         st.stop()
-    df = pd.read_csv(file_path, index_col='date', parse_dates=True)
+    df = pd.read_csv(file_name, index_col='date', parse_dates=True)
     return df.sort_index()
 
 # 执行加载
@@ -84,22 +87,22 @@ df_b['Is_Up'] = (df_b['close'] > df_b['close'].shift(1)).astype(int)
 df_b['Streak'] = df_b['Is_Up'].groupby((df_b['Is_Up'] != df_b['Is_Up'].shift()).cumsum()).cumcount() + 1
 df_b['Consec_Gains'] = np.where(df_b['Is_Up'] == 1, df_b['Streak'], 0)
 
-# 提取最新一根Bar数据进行判定
+# 提取最新数据
 last_b = df_b.iloc[-1]
 prev_b = df_b.iloc[-2]
 
-# B-买入条件判定
-b_cond1 = last_b['close'] > last_b['MA10']                    # 1. 趋势向上
-b_cond2 = prev_b['Consec_Gains'] >= 2                         # 2. 之前至少2连阳
-b_cond3 = last_b['close'] < prev_b['close']                   # 3. 今日首阴
+# B-买入判定
+b_cond1 = last_b['close'] > last_b['MA10']
+b_cond2 = prev_b['Consec_Gains'] >= 2
+b_cond3 = last_b['close'] < prev_b['close']
+# 换手率单位自适应
 t_val = last_b['ETF_Turnover'] if last_b['ETF_Turnover'] > 1 else last_b['ETF_Turnover'] * 100
-b_cond4 = t_val > 1.5                                         # 4. 换手率>1.5%
-b_cond5 = last_b['close'] > last_b['MA5']                     # 5. 守住5日线支撑
+b_cond4 = t_val > 1.5
+b_cond5 = last_b['close'] > last_b['MA5']
 
 b_buy_signal = b_cond1 and b_cond2 and b_cond3 and b_cond4 and b_cond5
 
-# B-卖出条件判定 (基于过去3天和5天的走势)
-# 规则6：连续3天收盘下跌
+# B-卖出判定
 recent_3_rets = df_b['close'].pct_change().tail(3)
 b_rule_6_sell = (recent_3_rets < 0).all()
 
@@ -127,60 +130,48 @@ with col2:
     st.pyplot(fig2)
 
 # ==========================================
-# 4. 动态逻辑看板：双策合一
+# 4. 动态逻辑看板
 # ==========================================
 st.divider()
 st.subheader("🛡️ 综合决策报告")
 
-# 4.1 指标矩阵
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("指数模式", "多头 (Bull)" if is_bull else "空头 (Bear)")
-m2.metric("热度 Z-Score", f"{curr_z:.2f}")
+m2.metric("热度 Z", f"{curr_z:.2f}")
 m3.metric("市场宽度", f"{curr_ma20:.1f}%")
 m4.metric("中证500换手", f"{t_val:.2f}%")
 
-# 4.2 策略 A 诊断 (宽度逻辑)
 st.write("---")
-st.markdown("#### 🟢 策略A：宽度/热度择时 (主要底仓参考)")
+# A 策略
+st.markdown("#### 🟢 策略A：宽度/热度择时")
 buy_a = curr_ma20 < 16
 if is_bull:
     sell_a = (curr_ma20 > 79) and (curr_z < 1.5) and (curr_nh < 10)
-    sell_reason_a = "宽度过热且创新高动能枯竭"
+    sell_msg = "宽度过热且动能枯竭"
 else:
     sell_a = (curr_ma20 > 40) and (curr_z < 1.0) and (curr_nh < 25)
-    sell_reason_a = "熊市反抽遇阻，动能不足"
+    sell_msg = "反抽遇阻"
 
-if buy_a:
-    st.success("🎯 **A策略建议：买入/补仓** —— 触发【冰点抄底】逻辑，宽度 < 16%。")
-elif sell_a:
-    st.error(f"🚨 **A策略建议：减仓/清仓** —— 满足【{sell_reason_a}】逻辑。")
-else:
-    st.info("⌛ **A策略状态**：当前未达触发阈值，建议持仓或观望。")
+if buy_a: st.success("🎯 **A建议：买入/补仓** (冰点触发)")
+elif sell_a: st.error(f"🚨 **A建议：减仓/清仓** ({sell_msg})")
+else: st.info("⌛ **A状态**：中性观望")
 
-# 4.3 策略 B 诊断 (首阴战法)
-st.markdown("#### 🔴 策略B：中证500首阴回踩 (波段加仓参考)")
+# B 策略
+st.markdown("#### 🔴 策略B：中证500首阴回踩")
 if b_buy_signal:
-    st.success("🔥 **B策略建议：【加仓】** —— 满足首阴战法5大买入条件：趋势向上 + 连阳后首阴 + 放量支撑。")
-    with st.expander("查看首阴买入逻辑详情"):
-        st.write(f"- 1. 指数收盘({last_b['close']:.0f}) > 10日线({last_b['MA10']:.0f}) ✅")
-        st.write(f"- 2. 前期连阳天数: {prev_b['Consec_Gains']} (>=2) ✅")
-        st.write(f"- 3. 今日收阴: {last_b['close']:.0f} < {prev_b['close']:.0f} ✅")
-        st.write(f"- 4. 换手率: {t_val:.2f}% (>1.5%) ✅")
-        st.write(f"- 5. 守住5日线: {last_b['close']:.0f} > {last_b['MA5']:.0f} ✅")
+    st.success("🔥 **B建议：【加仓】** —— 满足首阴回踩逻辑。")
+    with st.expander("逻辑详情"):
+        st.write(f"- 趋势/连阳/首阴/换手/支撑 全部达标 ✅")
 elif b_rule_6_sell:
-    st.error("🚨 **B策略建议：【减仓】** —— 满足规则6：连续3个交易日收盘价重心下移，逻辑走弱。")
+    st.error("🚨 **B建议：【减仓】** —— 触发连续3日下跌止损。")
 else:
-    st.info("⌛ **B策略状态**：未发现首阴回踩机会。")
+    st.info("⌛ **B状态**：未触发信号")
 
-# 4.4 综合操作结论
+# 综合结论
 st.divider()
-st.subheader("💡 最终操作结论")
 if buy_a and b_buy_signal:
-    st.warning("🚀 **共振操作**：A策略处于冰点，B策略触发首阴。这是极佳的重仓入场时机！")
+    st.warning("🚀 **综合结论：重仓共振！** A策略冰点与B策略首阴同时出现。")
 elif b_buy_signal:
-    st.info("🔎 **局部机会**：虽然大盘宽度一般，但中证500触发了首阴回踩，可进行小额波段加仓。")
-elif sell_a or b_rule_6_sell:
-    reason = "A策略热度风险" if sell_a else "B策略连跌止损"
-    st.error(f"⚠️ **风险警示**：满足【{reason}】。建议收缩战线，降低仓位。")
+    st.info("🔎 **综合结论：局部加仓。** 中证500出现短线回踩机会。")
 else:
-    st.write("✅ **目前市场处于平稳期**：建议按照各策略原有头寸继续持有，无须激进操作。")
+    st.write("✅ **综合结论：保持现状。**")
