@@ -40,7 +40,7 @@ def load_scan_results():
     df.set_index('date', inplace=True)
     return df
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=0)
 def load_master_data():
     """3. 加载 B策略 首阴战法数据 (CSI500_Master_Strategy.csv)"""
     file_name = 'CSI500_Master_Strategy.csv'
