@@ -1,4 +1,5 @@
 streamlit
 akshare
 pandas
+numpy
 matplotlib
