@@ -19,7 +19,7 @@ plt.rcParams['axes.unicode_minus'] = False
 # 1. 核心数据加载模块
 # ==========================================
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=0)
 def load_index_data():
     """1. 加载指数日线数据 ( sh000905 )"""
     df_idx = ak.stock_zh_index_daily(symbol="sh000905")
