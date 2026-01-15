@@ -160,18 +160,28 @@ st.write("---")
 col_a, col_b = st.columns(2)
 
 with col_a:
-    st.markdown("#### 🟢 策略A：宽度择时")
+    st.markdown("#### 🟢 策略A：宽度/热度择时")
+    
+    # 1. 计算判定变量
     buy_a = curr_ma20 < 16
     if is_bull:
         sell_a = (curr_ma20 > 79) and (curr_z < 1.5) and (curr_nh < 10)
-        s_reason = "宽度过热且创新高动能枯竭"
+        s_reason = "宽度过热且动能耗尽"
     else:
         sell_a = (curr_ma20 > 40) and (curr_z < 1.0) and (curr_nh < 25)
-        s_reason = "反抽遇阻"
+        s_reason = "熊市反抽遇阻"
 
-    if buy_a: st.success("🎯 **A建议：【买入/补仓】** (冰点触发)")
-    elif sell_a: st.error(f"🚨 **A建议：【卖出/清仓】** ({s_reason})")
-    else: st.warning("💎 **A状态：持股待涨**") if is_bull else st.info("⌛ **A状态：空仓观望**")
+    # 2. --- 修复后的逻辑展示区 (标准缩进版) ---
+    if buy_a: 
+        st.success("🎯 **操作建议：买入/补仓** (冰点放量)")
+    elif sell_a: 
+        st.error(f"🚨 **操作建议：减仓/清仓** ({s_reason})")
+    else: 
+        # 将三元表达式拆解为清晰的 if-else
+        if is_bull:
+            st.warning("💎 **A状态：持股待涨**")
+        else:
+            st.info("⌛ **A状态：空仓观望**")
 
 with col_b:
     st.markdown("#### 🔴 策略B：首阴战法")
