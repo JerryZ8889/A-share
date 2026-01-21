@@ -3,3 +3,4 @@ akshare
 pandas
 numpy
 matplotlib
+PyGithub
