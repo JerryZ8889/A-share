@@ -41,6 +41,14 @@ except Exception as e:
     st.stop()
 
 # ==========================================
+# 关键修复：合并实时 amount 列到 df_main（解决 KeyError: 'amount'）
+# ==========================================
+# df_idx（akshare实时数据）一定有 'amount' 列
+# df_main（本地CSV）可能缺少 'amount'，这里强制合并并前向填充
+df_main = df_main.join(df_idx[['amount']], how='left')
+df_main['amount'] = df_main['amount'].ffill().bfill()  # 确保无NaN
+
+# ==========================================
 # 2. 旗舰进化逻辑计算引擎（完全对齐回测 fusion_ma 版本）
 # ==========================================
 def calculate_flagship_signals(df_price, df_breadth):
@@ -112,6 +120,7 @@ def calculate_flagship_signals(df_price, df_breadth):
                 in_pos = False
                 logic_state = ""
                 hold_days = 0
+                max_close_since_entry = 0  # 重置
         
         # 买入逻辑
         else:
