@@ -18,7 +18,7 @@ plt.rcParams['axes.unicode_minus'] = False
 # ==========================================
 # 1. 核心数据加载
 # ==========================================
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=0)
 def load_data():
     # 加载扫描结果（广度）
     df_scan = pd.read_csv("scan_results.csv", index_col='date', parse_dates=True)
