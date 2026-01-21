@@ -19,7 +19,7 @@ plt.rcParams['axes.unicode_minus'] = False
 # 1. 核心数据加载模块
 # ==========================================
 
-@st.cache_data(ttl=60) # 生产环境下建议设为60秒
+@st.cache_data(ttl=0) # 生产环境下建议设为60秒
 def load_all_data():
     """集中加载所有必要数据"""
     # 1. 指数日线 (用于热度计算)
