@@ -1,27 +1,24 @@
 import streamlit as st
-import akshare as ak
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from datetime import datetime
+import akshare as ak
 
 # ==========================================
-# 0. 页面配置与字体修复
+# 0. 环境与字体修复
 # ==========================================
 st.set_page_config(page_title="量化大师-旗舰进化版", layout="wide")
 st.title("🛡️ 量化大师：MA30过滤旗舰进化版综合看板")
 
-# --- ⚡ 字体兼容性修复 ---
 def set_matplotlib_font():
-    # 尝试多种常用中文字体
     fonts = ['Microsoft YaHei', 'SimHei', 'Arial Unicode MS', 'sans-serif']
     plt.rcParams['font.sans-serif'] = fonts
-    plt.rcParams['axes.unicode_minus'] = False # 修复负号显示
+    plt.rcParams['axes.unicode_minus'] = False
 set_matplotlib_font()
 
 # ==========================================
-# 1. 核心数据加载 (保持原结构)
+# 1. 数据加载逻辑
 # ==========================================
 @st.cache_data(ttl=0)
 def load_all_data():
@@ -36,28 +33,25 @@ def load_all_data():
 try:
     df_idx, df_scan, df_main, df_summary = load_all_data()
 except Exception as e:
-    st.error(f"⚠️ 数据加载失败: {e}")
+    st.error(f"⚠️ 加载失败: {e}")
     st.stop()
 
 # ==========================================
-# 2. 旗舰进化版计算引擎 (修复 nan 问题)
+# 2. 旗舰进化计算引擎
 # ==========================================
-def calculate_flagship_signals(df_price, df_breadth):
+def calculate_signals(df_price, df_breadth):
     df = df_price.copy()
     df['MA5'] = df['close'].rolling(5).mean()
     df['MA10'] = df['close'].rolling(10).mean()
-    df['MA20'] = df['close'].rolling(20).mean() # 补上矩阵需要的列
+    df['MA20'] = df['close'].rolling(20).mean()
     df['MA30'] = df['close'].rolling(30).mean()
     df['MA60'] = df['close'].rolling(60).mean()
     
-    # 广度合并
     df = df.join(df_breadth[['ma20_ratio', 'new_high_ratio']], how='left').ffill()
     
-    # --- ⚡ 修复 Z-Score nan 问题 ---
+    # 修复 nan Z-Score 问题
     vol = df['volume']
-    # 确保窗口内有值，并向前填充
-    df['Heat_Z'] = (vol - vol.rolling(60).mean()) / vol.rolling(60).std()
-    df['Heat_Z'] = df['Heat_Z'].ffill().fillna(0) # 填充最后的空值
+    df['Heat_Z'] = ((vol - vol.rolling(60).mean()) / vol.rolling(60).std()).ffill().fillna(0)
     
     df['Is_Up'] = (df['close'] > df['close'].shift(1)).astype(int)
     df['Consec_Gains'] = df['Is_Up'].groupby((df['Is_Up'] != df['Is_Up'].shift()).cumsum()).cumcount() + 1
@@ -65,9 +59,7 @@ def calculate_flagship_signals(df_price, df_breadth):
     
     df['Turnover_Pct'] = np.where(df['ETF_Turnover'] > 1, df['ETF_Turnover'], df['ETF_Turnover'] * 100)
     
-    # 信号循环
-    df['signal'] = 0
-    df['logic_type'] = ""
+    df['signal'], df['logic_type'] = 0, ""
     in_pos, logic_state, entry_high, hold_days = False, "", 0, 0
 
     for i in range(1, len(df)):
@@ -78,7 +70,7 @@ def calculate_flagship_signals(df_price, df_breadth):
             exit_flag = False
             if logic_state == "Strategic":
                 if is_overheat: exit_flag = True
-            else: # Tactical
+            else:
                 is_below_ma30 = curr['close'] < curr['MA30']
                 if is_overheat or (is_below_ma30 and (curr['close'] < prev['close'] or (hold_days >= 5 and curr['close'] < entry_high))):
                     exit_flag = True
@@ -97,40 +89,67 @@ def calculate_flagship_signals(df_price, df_breadth):
                 in_pos, logic_state, hold_days, entry_high = True, "Tactical", 0, curr['high']
     return df
 
-df_final = calculate_flagship_signals(df_main, df_scan)
+df_final = calculate_signals(df_main, df_scan)
 last_row = df_final.iloc[-1]
 
 # ==========================================
-# 3. 页面布局与看板 (保持原有逻辑)
+# 3. 页面布局与看板
 # ==========================================
-# [此处代码与之前相同：col1/col2、诊断报告、换手率监测矩阵等]
+c1, c2 = st.columns(2)
+with c1:
+    st.subheader("🔥 资金热度 (Z-Score)")
+    fig1, ax1 = plt.subplots(figsize=(10, 5))
+    p_z = df_final['Heat_Z'].tail(100)
+    ax1.fill_between(p_z.index, p_z, 0, where=(p_z>=0), color='red', alpha=0.3)
+    ax1.fill_between(p_z.index, p_z, 0, where=(p_z<0), color='blue', alpha=0.3)
+    st.pyplot(fig1)
+
+with c2:
+    st.subheader("📊 市场广度趋势")
+    fig2, axl = plt.subplots(figsize=(10, 5))
+    axl.plot(df_scan.index, df_scan['ma20_ratio'], color='tab:blue', label='MA20%')
+    axr = axl.twinx()
+    axr.bar(df_scan.index, df_scan['new_high_ratio'], color='tab:orange', alpha=0.3)
+    st.pyplot(fig2)
+
+st.divider()
+st.subheader("🛡️ 动态逻辑诊断报告")
+m1, m2, m3 = st.columns(3)
+m1.metric("市场模式", "📈 多头" if last_row['MA20'] > last_row['MA60'] else "📉 空头")
+m2.metric("资金热度 (Z)", f"{last_row['Heat_Z']:.2f}")
+m3.metric("市场宽度", f"{last_row['ma20_ratio']:.1f}%")
+
+st.write("🔥 **全市场量能共振监测**")
+def get_t(lbl):
+    if not df_summary.empty:
+        v = df_summary[df_summary['Index_Label'] == lbl]['ETF_Turnover'].values
+        if len(v)>0: return v[0] if v[0]>1 else v[0]*100
+    return 0.0
+t1, t2, t3, t4 = st.columns(4)
+t1.metric("上证50", f"{get_t('SSE50'):.2f}%")
+t2.metric("沪深300", f"{get_t('CSI300'):.2f}%")
+t3.metric("中证500", f"{last_row['Turnover_Pct']:.2f}%")
+t4.metric("中证1000", f"{get_t('CSI1000'):.2f}%")
 
 # ==========================================
-# 5. 结论输出与走势标注 (修复图表中文)
+# 4. K线标注与建议
 # ==========================================
 st.divider()
 st.subheader("💡 最终操作建议与走势标注")
+if last_row['signal'] == 1: st.success(f"🚀 **操作建议：买入 ({last_row['logic_type']})**")
+elif last_row['signal'] == -1: st.error("🚨 **操作建议：清仓/减仓**")
+else: st.info("✅ **操作建议：持股/观望**")
 
-# ... [结论判定逻辑保持不变] ...
-
-st.markdown("#### 📅 中证500 (sh000905) 走势与信号标注 (2024至今)")
 df_plot = df_final.loc["2024-01-01":]
 fig3, ax3 = plt.subplots(figsize=(16, 8))
 ax3.plot(df_plot.index, df_plot['close'], color='gray', alpha=0.5, label='收盘价')
-ax3.plot(df_plot.index, df_plot['MA30'], color='blue', linestyle='--', alpha=0.4, label='MA30趋势线')
-
-# 标注买卖点
-buys = df_plot[df_plot['signal'] == 1]
-ax3.scatter(buys.index, buys['close'], color='red', marker='^', s=120, zorder=5, label='买入(战略/战术)')
-sells = df_plot[df_plot['signal'] == -1]
-ax3.scatter(sells.index, sells['close'], color='green', marker='v', s=120, zorder=5, label='卖出(复合止损)')
-
-# --- ⚡ 显式设置图例，防止乱码 ---
-ax3.legend(loc='upper left', prop={'size': 12})
-ax3.grid(True, alpha=0.2)
+ax3.plot(df_plot.index, df_plot['MA30'], color='blue', linestyle='--', label='MA30')
+b_pts = df_plot[df_plot['signal'] == 1]
+s_pts = df_plot[df_plot['signal'] == -1]
+ax3.scatter(b_pts.index, b_pts['close'], color='red', marker='^', s=120, label='买入')
+ax3.scatter(s_pts.index, s_pts['close'], color='green', marker='v', s=120, label='卖出')
+ax3.legend()
 st.pyplot(fig3)
 
-# ==========================================
-# 6. 决策逻辑判定详情 (保持原样)
-# ==========================================
-# [此处代码与之前相同：st.expander 部分]
+with st.expander("查看决策逻辑判定详情"):
+    st.write("战略：广度<16%。战术：MA30线上+首阴+换手>1%。退出：过热或趋势走弱。")
