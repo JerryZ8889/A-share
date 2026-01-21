@@ -18,7 +18,7 @@ plt.rcParams['axes.unicode_minus'] = False
 # ==========================================
 # 1. 核心数据加载 (加速版)
 # ==========================================
-@st.cache_data(ttl=60)  # 缓存60秒，平衡实时性与速度
+@st.cache_data(ttl=0)  # 缓存60秒，平衡实时性与速度
 def load_data():
     # 1. 加载扫描结果（广度数据）
     df_scan = pd.read_csv("scan_results.csv", index_col='date', parse_dates=True)
