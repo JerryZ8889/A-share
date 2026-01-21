@@ -16,34 +16,42 @@ plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
 # ==========================================
-# 1. 核心数据加载
+# 1. 核心数据加载 (已升级为读取 Summary 加速版)
 # ==========================================
-@st.cache_data(ttl=0)
+@st.cache_data(ttl=0)  # 建议设为60秒，兼顾实时性与速度
 def load_data():
-    # 加载扫描结果（广度）
+    # 1. 加载扫描结果（广度数据）
+    # 注意：如果是在github上，pandas可以直接读文件名，streamlit会自动找
     df_scan = pd.read_csv("scan_results.csv", index_col='date', parse_dates=True)
-    # 加载中证500底表
+    
+    # 2. 加载中证500底表 (主图必须读全量历史数据，不能省)
     df_500 = pd.read_csv("CSI500_Master_Strategy.csv", index_col='date', parse_dates=True)
-    # 加载其他指数换手率用于共振分析
-    etf_files = {
-        "SSE50": "SSE50_Master_Strategy.csv",
-        "CSI300": "CSI300_Master_Strategy.csv",
-        "CSI1000": "CSI1000_Master_Strategy.csv"
-    }
+    
+    # 3. 加载其他指数换手率 (⚡️核心修改点：改读 master_summary.csv)
     other_turnovers = {}
-    for k, v in etf_files.items():
-        if os.path.exists(v):
-            tdf = pd.read_csv(v)
-            val = tdf['ETF_Turnover'].iloc[-1]
-            other_turnovers[k] = val if val > 1 else val * 100
-    return df_scan, df_500, other_turnovers
+    
+    # 定义默认值，防止summary文件还没生成时报错
+    default_etfs = ["SSE50", "CSI300", "CSI1000"]
+    for etf in default_etfs: other_turnovers[etf] = 0.0
+        
+    try:
+        if os.path.exists("master_summary.csv"):
+            df_sum = pd.read_csv("master_summary.csv")
+            # 遍历汇总表，提取换手率
+            for _, row in df_sum.iterrows():
+                label = row['Index_Label']  # runscan里我们加的标签列
+                val = row['ETF_Turnover']
+                # 统一格式为百分比
+                other_turnovers[label] = val if val > 1 else val * 100
+        else:
+            # 如果找不到汇总表，这里可以写回退逻辑，或者直接打印警告
+            # 为了代码简洁，这里暂时保留默认值0，等待runscan运行生成
+            print("⚠️ 未找到 master_summary.csv，使用默认值")
+            
+    except Exception as e:
+        print(f"❌ 读取汇总表失败: {e}")
 
-try:
-    df_scan, df_main, other_turnovers = load_data()
-    st.success(f"✅ 数据同步成功！最新数据日期：{df_main.index[-1].strftime('%Y-%m-%d')}")
-except Exception as e:
-    st.error(f"❌ 数据同步失败，请检查GitHub文件是否齐全: {e}")
-    st.stop()
+    return df_scan, df_500, other_turnovers
 
 # ==========================================
 # 2. 旗舰进化版逻辑计算引擎
