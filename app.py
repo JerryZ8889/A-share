@@ -4,226 +4,228 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+from datetime import datetime
 
 # ==========================================
 # 0. 页面配置与基础环境
 # ==========================================
-st.set_page_config(page_title="量化大师-策略融合版", layout="wide")
-st.title("🛡️ 量化大师：全量扫描与首阴战法综合看板")
+st.set_page_config(page_title="量化大师-旗舰进化版", layout="wide")
+st.title("🛡️ 量化大师：MA30过滤旗舰进化版综合看板")
 
-# 设置绘图字体
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
 # ==========================================
-# 1. 核心数据加载模块
+# 1. 核心数据加载
 # ==========================================
-
 @st.cache_data(ttl=3600)
-def load_index_data():
-    """1. 加载指数日线数据 ( sh000905 )"""
-    df_idx = ak.stock_zh_index_daily(symbol="sh000905")
-    df_idx['date'] = pd.to_datetime(df_idx['date'])
-    df_idx.set_index('date', inplace=True)
-    return df_idx
-
-@st.cache_data(ttl=0) # 强制实时同步
-def load_scan_results():
-    """2. 加载 A策略 市场广度结果 (scan_results.csv)"""
-    file_name = "scan_results.csv"
-    if not os.path.exists(file_name):
-        st.error(f"❌ 未找到 {file_name}")
-        st.stop()
-    df = pd.read_csv(file_name)
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    df = df.dropna(subset=['date']).sort_values('date')
-    df.set_index('date', inplace=True)
-    return df
-
-@st.cache_data(ttl=3600)
-def load_master_data():
-    """3. 加载 B策略 首阴战法数据 (CSI500_Master_Strategy.csv)"""
-    file_name = 'CSI500_Master_Strategy.csv'
-    if not os.path.exists(file_name):
-        st.error(f"❌ 找不到文件 {file_name}")
-        st.stop()
-    df = pd.read_csv(file_name, index_col='date', parse_dates=True)
-    return df.sort_index()
-
-@st.cache_data(ttl=600)
-def get_all_etf_turnovers():
-    """4. 批量获取四个 ETF 的最新换手率"""
-    files = {
+def load_data():
+    # 加载扫描结果（广度）
+    df_scan = pd.read_csv("scan_results.csv", index_col='date', parse_dates=True)
+    # 加载中证500底表
+    df_500 = pd.read_csv("CSI500_Master_Strategy.csv", index_col='date', parse_dates=True)
+    # 加载其他指数换手率用于共振分析
+    etf_files = {
         "SSE50": "SSE50_Master_Strategy.csv",
         "CSI300": "CSI300_Master_Strategy.csv",
-        "CSI500": "CSI500_Master_Strategy.csv",
         "CSI1000": "CSI1000_Master_Strategy.csv"
     }
-    turnovers = {}
-    for label, filename in files.items():
-        if os.path.exists(filename):
-            df = pd.read_csv(filename)
-            raw_val = df['ETF_Turnover'].iloc[-1]
-            # 统一纠偏逻辑：确保输出为百分比
-            turnovers[label] = raw_val if raw_val > 1 else raw_val * 100
-        else:
-            turnovers[label] = 0.0
-    return turnovers
+    other_turnovers = {}
+    for k, v in etf_files.items():
+        if os.path.exists(v):
+            tdf = pd.read_csv(v)
+            val = tdf['ETF_Turnover'].iloc[-1]
+            other_turnovers[k] = val if val > 1 else val * 100
+    return df_scan, df_500, other_turnovers
 
-# 执行加载
 try:
-    df_idx = load_index_data()
-    history_df = load_scan_results()
-    df_b = load_master_data()
-    all_turnovers = get_all_etf_turnovers() # 加载全部换手率
-    
-    # 获取最新数据用于顶部看板
-    last_row_a = history_df.iloc[-1]
-    curr_ma20 = last_row_a['ma20_ratio']
-    curr_nh = last_row_a['new_high_ratio']
-    scan_date = history_df.index[-1].strftime('%Y-%m-%d')
-    update_time = f" | 扫描时间：{last_row_a['update_time']}" if 'update_time' in last_row_a else ""
-    
-    # 顶部成功提示框
-    st.success(f"✅ 数据同步成功！ 数据日期：{scan_date}{update_time}")
+    df_scan, df_main, other_turnovers = load_data()
+    st.success(f"✅ 数据同步成功！最新数据日期：{df_main.index[-1].strftime('%Y-%m-%d')}")
 except Exception as e:
-    st.error(f"⚠️ 数据同步失败: {e}")
+    st.error(f"❌ 数据同步失败，请检查GitHub文件是否齐全: {e}")
     st.stop()
 
 # ==========================================
-# 2. 布局：左右双图
+# 2. 旗舰进化版逻辑计算引擎
+# ==========================================
+def calculate_signals(df, df_breadth):
+    df = df.copy()
+    # 基础指标
+    df['MA5'] = df['close'].rolling(5).mean()
+    df['MA10'] = df['close'].rolling(10).mean()
+    df['MA30'] = df['close'].rolling(30).mean()
+    df['MA60'] = df['close'].rolling(60).mean()
+    
+    # 广度指标合并
+    df = df.join(df_breadth[['ma20_ratio', 'new_high_ratio']], how='left')
+    
+    # 资金热度 Z-Score
+    df['Vol_MA60'] = df['volume'].rolling(60).mean()
+    df['Vol_STD60'] = df['volume'].rolling(60).std()
+    df['Heat_Z'] = (df['volume'] - df['Vol_MA60']) / df['Vol_STD60']
+    
+    # 首阴特征
+    df['Is_Up'] = (df['close'] > df['close'].shift(1)).astype(int)
+    df['Consec_Gains'] = df['Is_Up'].groupby((df['Is_Up'] != df['Is_Up'].shift()).cumsum()).cumcount() + 1
+    df['Consec_Gains'] = np.where(df['Is_Up'] == 1, df['Consec_Gains'], 0)
+    
+    # 仿真买卖点（用于画图）
+    df['signal'] = 0  # 1: 买入, -1: 卖出
+    df['logic_type'] = "" # Strategic 或 Tactical
+    
+    in_pos = False
+    logic_state = "" # "Strategic" 或 "Tactical"
+    entry_high = 0
+    hold_days = 0
+
+    for i in range(1, len(df)):
+        curr = df.iloc[i]
+        prev = df.iloc[i-1]
+        
+        # 1. 宏观/战略买入信号 (广度冰点)
+        cond_strategic_buy = curr['ma20_ratio'] < 16
+        
+        # 2. 战术/首阴买入信号 (旗舰进化版)
+        cond_tactical_buy = (
+            curr['close'] > curr['MA30'] and 
+            curr['close'] > curr['MA10'] and 
+            prev['Consec_Gains'] >= 3 and 
+            curr['close'] < prev['close'] and 
+            (curr['ETF_Turnover'] if curr['ETF_Turnover']>1 else curr['ETF_Turnover']*100) > 1.0 and 
+            curr['close'] > curr['MA5']
+        )
+        
+        # 卖出逻辑判断
+        if in_pos:
+            hold_days += 1
+            is_overheat = curr['ma20_ratio'] > 79 and curr['Heat_Z'] < 1.5
+            exit_flag = False
+            
+            if logic_state == "Strategic":
+                if is_overheat: exit_flag = True
+            else: # Tactical
+                is_below_ma30 = curr['close'] < curr['MA30']
+                is_1d_drop = curr['close'] < prev['close']
+                is_5d_no_high = (hold_days >= 5 and curr['close'] < entry_high)
+                if is_overheat or (is_below_ma30 and (is_1d_drop or is_5d_no_high)):
+                    exit_flag = True
+            
+            if exit_flag:
+                df.iloc[i, df.columns.get_loc('signal')] = -1
+                in_pos = False
+                logic_state = ""
+        
+        # 买入执行
+        else:
+            if cond_strategic_buy:
+                df.iloc[i, df.columns.get_loc('signal')] = 1
+                df.iloc[i, df.columns.get_loc('logic_type')] = "Strategic"
+                in_pos, logic_state, hold_days = True, "Strategic", 0
+            elif cond_tactical_buy:
+                df.iloc[i, df.columns.get_loc('signal')] = 1
+                df.iloc[i, df.columns.get_loc('logic_type')] = "Tactical"
+                in_pos, logic_state, hold_days = True, "Tactical", 0
+                entry_high = curr['high']
+                
+    return df
+
+df_final = calculate_signals(df_main, df_scan)
+last_data = df_final.iloc[-1]
+
+# ==========================================
+# 3. 页面布局：资金热度与广度面板 (保持原样)
 # ==========================================
 col1, col2 = st.columns(2)
-
 with col1:
     st.subheader("🔥 资金热度 (Z-Score)")
-    vol = df_idx['volume']
-    z_series = (vol - vol.rolling(60).mean()) / vol.rolling(60).std()
-    curr_z = z_series.iloc[-1]
-    
     fig1, ax1 = plt.subplots(figsize=(10, 5))
-    p_data = z_series.tail(100)
+    p_data = df_final['Heat_Z'].tail(100)
     ax1.fill_between(p_data.index, p_data, 0, where=(p_data>=0), color='red', alpha=0.3)
     ax1.fill_between(p_data.index, p_data, 0, where=(p_data<0), color='blue', alpha=0.3)
     ax1.axhline(y=1.5, color='orange', linestyle='--')
-    plt.xticks(rotation=45)
     st.pyplot(fig1)
 
 with col2:
-    st.subheader("📊 市场广度 (全量历史趋势)")
+    st.subheader("📊 市场广度趋势")
     fig2, ax_l = plt.subplots(figsize=(10, 5))
-    ax_l.plot(history_df.index, history_df['ma20_ratio'], color='tab:blue', marker='o', linewidth=2, label='MA20 %')
+    ax_l.plot(df_final.index[-100:], df_final['ma20_ratio'].tail(100), color='tab:blue', marker='o', label='MA20 %')
     ax_l.set_ylim(0, 100)
-    ax_l.set_ylabel('Above MA20 (%)', color='tab:blue')
     ax_r = ax_l.twinx()
-    ax_r.bar(history_df.index, history_df['new_high_ratio'], color='tab:orange', alpha=0.4)
-    ax_r.set_ylabel('New High (%)', color='tab:orange')
-    plt.xticks(rotation=45)
-    fig2.tight_layout()
+    ax_r.bar(df_final.index[-100:], df_final['new_high_ratio'].tail(100), color='tab:orange', alpha=0.3)
     st.pyplot(fig2)
 
 # ==========================================
-# 3. 核心计算中心
-# ==========================================
-idx_close = df_idx['close']
-ma20_idx = idx_close.rolling(20).mean().iloc[-1]
-ma60_idx = idx_close.rolling(60).mean().iloc[-1]
-is_bull = ma20_idx > ma60_idx
-
-df_b['MA5'] = df_b['close'].rolling(5).mean()
-df_b['MA10'] = df_b['close'].rolling(10).mean()
-df_b['Is_Up'] = (df_b['close'] > df_b['close'].shift(1)).astype(int)
-df_b['Streak'] = df_b['Is_Up'].groupby((df_b['Is_Up'] != df_b['Is_Up'].shift()).cumsum()).cumcount() + 1
-df_b['Consec_Gains'] = np.where(df_b['Is_Up'] == 1, df_b['Streak'], 0)
-
-last_b = df_b.iloc[-1]
-prev_b = df_b.iloc[-2]
-
-# B策略逻辑
-b_cond1 = last_b['close'] > last_b['MA10']
-b_cond2 = prev_b['Consec_Gains'] >= 2
-b_cond3 = last_b['close'] < prev_b['close']
-t_val = all_turnovers['CSI500'] # 使用加载好的中证500换手率
-b_cond4 = t_val > 1.5
-b_cond5 = last_b['close'] > last_b['MA5']
-b_add_signal = b_cond1 and b_cond2 and b_cond3 and b_cond4 and b_cond5
-
-recent_rets = df_b['close'].pct_change().tail(3)
-b_sell_signal = (recent_rets < 0).all()
-
-# ==========================================
-# 4. 诊断报告看板 (融合诊断)
+# 4. 动态逻辑诊断报告
 # ==========================================
 st.divider()
 st.subheader("🛡️ 动态逻辑诊断报告")
-
-# 4.1 核心指标矩阵
 m1, m2, m3 = st.columns(3)
-m1.metric("市场模式", "📈 多头 (Bull)" if is_bull else "📉 空头 (Bear)")
-m2.metric("资金热度 (Z)", f"{curr_z:.2f}")
-m3.metric("市场宽度 (MA20%)", f"{curr_ma20:.1f}%")
+is_bull = last_data['MA20'] > last_data['MA60']
+m1.metric("市场模式", "📈 多头趋势" if is_bull else "📉 空头趋势")
+m2.metric("资金热度 (Z)", f"{last_data['Heat_Z']:.2f}")
+m3.metric("市场宽度 (MA20%)", f"{last_data['ma20_ratio']:.1f}%")
 
-# 4.2 全市场换手率监测矩阵 (新增一行展示 4 个 ETF)
-st.write("🔥 **全市场量能共振监测 (实时换手率)**")
+st.write("🔥 **全市场量能监测**")
 t1, t2, t3, t4 = st.columns(4)
-t1.metric("上证50", f"{all_turnovers['SSE50']:.2f}%")
-t2.metric("沪深300", f"{all_turnovers['CSI300']:.2f}%")
-t3.metric("中证500", f"{all_turnovers['CSI500']:.2f}%")
-t4.metric("中证1000", f"{all_turnovers['CSI1000']:.2f}%")
-
-st.info(f"**模式分析**：{'📈 当前为：多头趋势环境 (MA20 > MA60)' if is_bull else '📉 当前为：空头趋势环境 (MA20 < MA60)'}")
-
-# 4.3 策略分项建议
-st.write("---")
-col_a, col_b = st.columns(2)
-
-with col_a:
-    st.markdown("#### 🟢 策略A：宽度/热度择时")
-    buy_a = curr_ma20 < 16
-    if is_bull:
-        sell_a = (curr_ma20 > 79) and (curr_z < 1.5) and (curr_nh < 10)
-        s_reason = "宽度过热且动能耗尽"
-    else:
-        sell_a = (curr_ma20 > 40) and (curr_z < 1.0) and (curr_nh < 25)
-        s_reason = "熊市反抽遇阻"
-
-    if buy_a: 
-        st.success("🎯 **操作建议：买入/补仓** (冰点放量)")
-    elif sell_a: 
-        st.error(f"🚨 **操作建议：减仓/清仓** ({s_reason})")
-    else: 
-        if is_bull: st.warning("💎 **A状态：持股待涨**")
-        else: st.info("⌛ **A状态：空仓观望**")
-
-with col_b:
-    st.markdown("#### 🔴 策略B：首阴战法")
-    if b_add_signal:
-        st.success("🔥 **B建议：【加仓】** —— 满足首阴回踩逻辑")
-    elif b_sell_signal:
-        st.error("🚨 **B建议：【减仓】** —— 满足重心下移止损")
-    else:
-        st.info("⌛ **B状态：无需操作**")
+t1.metric("上证50", f"{other_turnovers.get('SSE50',0):.2f}%")
+t2.metric("沪深300", f"{other_turnovers.get('CSI300',0):.2f}%")
+t3.metric("中证500", f"{last_data['ETF_Turnover'] if last_data['ETF_Turnover']>1 else last_data['ETF_Turnover']*100:.2f}%")
+t4.metric("中证1000", f"{other_turnovers.get('CSI1000',0):.2f}%")
 
 # ==========================================
-# 5. 最终结论输出
+# 5. 最终结论与日K线标注
 # ==========================================
 st.divider()
-st.subheader("💡 最终操作建议")
+st.subheader("💡 最终操作建议与走势标注")
 
-if buy_a and b_add_signal:
-    st.warning("🚀 **综合结论：重仓共振！** 大盘冰点与500指数首阴回踩同时出现，胜率极高。")
-elif b_add_signal:
-    st.info("🔎 **综合结论：局部加仓。** 虽然大盘宽度一般，但中证500提供了高性价比的回踩加仓点。")
-elif sell_a or b_sell_signal:
-    reason = "A策略风险预警" if sell_a else "B策略趋势走坏"
-    st.error(f"🚨 **综合结论：防御减仓。** 满足【{reason}】，建议收缩头寸。")
+# 逻辑判定
+curr_buy_signal = last_data['signal'] == 1
+curr_logic = last_data['logic_type']
+
+if curr_buy_signal:
+    if curr_logic == "Strategic":
+        st.success("🚀 **综合结论：战略级买入！** 全市场进入广度冰点区域，宏观赔率极高。")
+    else:
+        st.success("🔥 **综合结论：战术级加仓！** 满足MA30过滤+首阴回踩，短期爆发力强。")
+elif last_data['signal'] == -1:
+    st.error("🚨 **综合结论：立刻减仓！** 触发旗舰版复合止损逻辑，保护利润/规避风险。")
 else:
-    st.write("✅ **综合结论：目前市场处于平稳期**。建议按原有比例持仓，等待信号。")
+    st.info("✅ **综合结论：观望或持股。** 目前未触发新的买卖信号。")
 
-with st.expander("查看决策逻辑判定详情"):
+# 中证500 K线图
+st.markdown("#### 📅 中证500 走势与信号回顾 (2024至今)")
+df_plot = df_final.loc["2024-01-01":]
+fig3, ax3 = plt.subplots(figsize=(16, 8))
+ax3.plot(df_plot.index, df_plot['close'], color='gray', alpha=0.6, label='中证500收盘价')
+ax3.plot(df_plot.index, df_plot['MA30'], color='blue', linestyle='--', alpha=0.4, label='MA30趋势线')
+
+# 标注买入
+buys = df_plot[df_plot['signal'] == 1]
+ax3.scatter(buys.index, buys['close'], color='red', marker='^', s=100, label='买入点')
+# 标注卖出
+sells = df_plot[df_plot['signal'] == -1]
+ax3.scatter(sells.index, sells['close'], color='green', marker='v', s=100, label='卖出点')
+
+ax3.legend()
+ax3.grid(True, alpha=0.3)
+st.pyplot(fig3)
+
+# ==========================================
+# 6. 决策逻辑判定详情
+# ==========================================
+with st.expander("查看【MA30过滤版旗舰进化】决策逻辑详情"):
     st.write(f"""
-    - **A策略买入标准**：宽度 < 16% (当前: {curr_ma20:.1f}%)
-    - **A策略卖出标准 ({'多头' if is_bull else '空头'})**：宽度 > {'79%' if is_bull else '40%'}, Z < {'1.5' if is_bull else '1.0'}
-    - **B策略买入逻辑**：10日线上 + 连阳后首阴 + 换手>1.5% + 5日线不破 (当前500换手: {all_turnovers['CSI500']:.2f}%)
-    - **B策略止损逻辑**：价格重心连续 3 日下移
+    **1. 战略买入 (Strategic Buy)**:
+    - 核心条件：市场广度 (MA20 Ratio) < 16% (当前: {last_data['ma20_ratio']:.1f}%)
+    - 逻辑：全市场极度超跌，属于宏观底部的左侧博弈。
+
+    **2. 战术买入 (Tactical Buy - 旗舰进化)**:
+    - MA30过滤器：价格 > MA30 (当前: {'满足' if last_data['close']>last_data['MA30'] else '不满足'})
+    - 首阴形态：此前连阳 >= 3天，今日收阴。
+    - 活跃度：ETF换手率 > 1.0% (当前: {last_data['ETF_Turnover'] if last_data['ETF_Turnover']>1 else last_data['ETF_Turnover']*100:.2f}%)
+    - 防御位：价格 > MA5 且 > MA10。
+
+    **3. 复合止损 (Composite Exit)**:
+    - 战略单：仅在宏观过热 (广度>79% 且 资金热度衰减) 时退出。
+    - 战术单：若价格在 MA30 下方，满足 (今日下跌) 或 (5日不创新高) 即刻退出。
     """)
