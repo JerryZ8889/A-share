@@ -23,7 +23,7 @@ set_chinese_font()
 # ==========================================
 # 1. 核心数据加载
 # ==========================================
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=0)
 def load_all_data():
     # 1. 加载指数 (用于显示)
     df_idx = ak.stock_zh_index_daily(symbol="sh000905")
